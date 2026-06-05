@@ -22,10 +22,10 @@ jobs:
         pip install pygame numpy pyinstaller
         
     - name: Build with PyInstaller
-      run: pyinstaller --onefile --windowed --hidden-import game_logic.observer --hidden-import game_logic.director --hidden-import game_logic.runtime_logger --hidden-import ai.bandit_dea --hidden-import ai.generator --hidden-import ai.verifier main.py
+      run: pyinstaller --windowed --hidden-import game_logic.observer --hidden-import game_logic.director --hidden-import game_logic.runtime_logger --hidden-import ai.bandit_dea --hidden-import ai.generator --hidden-import ai.verifier main.py
       
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
         name: EvolvingDepths-Windows
-        path: dist/main.exe
+        path: dist/main

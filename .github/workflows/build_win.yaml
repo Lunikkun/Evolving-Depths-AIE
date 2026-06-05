@@ -21,11 +21,17 @@ jobs:
         python -m pip install --upgrade pip
         pip install pygame numpy pyinstaller
         
+    - name: Forza creazione moduli (Bypass Git)
+      shell: bash
+      run: |
+        touch game_logic/__init__.py
+        touch ai/__init__.py
+        
     - name: Build with PyInstaller
-      run: pyinstaller --windowed --hidden-import game_logic.observer --hidden-import game_logic.director --hidden-import game_logic.runtime_logger --hidden-import ai.bandit_dea --hidden-import ai.generator --hidden-import ai.verifier main.py
+      run: pyinstaller --onefile --windowed --paths . --hidden-import game_logic.observer --hidden-import game_logic.director --hidden-import game_logic.runtime_logger --hidden-import ai.bandit_dea --hidden-import ai.generator --hidden-import ai.verifier main.py
       
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
         name: EvolvingDepths-Windows
-        path: dist/main
+        path: dist/main.exe

@@ -21,16 +21,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install pygame numpy pyinstaller
         
-    - name: Forza riconoscimento Moduli (Anti-crash)
+    - name: Prepara Cartelle
       shell: bash
       run: |
-        # Crea fisicamente i file __init__.py direttamente sul server
         touch game_logic/__init__.py
         touch ai/__init__.py
         
-    - name: Build with PyInstaller (Nuclear Option)
-      # Usiamo --collect-all per forzare l'inclusione di TUTTO il contenuto delle cartelle
-      run: pyinstaller --onefile --windowed --paths . --collect-all game_logic --collect-all ai main.py
+    - name: Build with PyInstaller (Add-Data)
+      run: pyinstaller --onefile --windowed --add-data "game_logic;game_logic" --add-data "ai;ai" main.py
       
     - name: Upload EXE
       uses: actions/upload-artifact@v4

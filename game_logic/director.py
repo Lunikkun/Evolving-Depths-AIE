@@ -35,6 +35,7 @@ class Director:
         self,
         player_stats: Optional[Tuple[float, int]] = None,
         key_press_rate: float = 0.0,
+        exits: Optional[dict] = None
     ) -> Tuple[np.ndarray, int, int]:
         # Observe + Infer: update reward from previous room metrics.
         if player_stats is not None and self.last_difficulty is not None:
@@ -53,7 +54,9 @@ class Director:
         while True:
             attempts += 1
             candidate_map = self.generator.create_map(target_difficulty, engagement=self.last_engagement)
-            if self.verifier.check_playability(candidate_map):
+            
+            # Passiamo le porte calcolate al verifier
+            if self.verifier.check_playability(candidate_map, exits):
                 self.last_difficulty = target_difficulty
                 log_event(
                     f"DIRECTOR room_validated difficulty={target_difficulty} attempts={attempts} wall_prob={self.generator.last_wall_prob:.3f} enemies={self.generator.last_enemy_count}"

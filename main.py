@@ -713,7 +713,6 @@ def _update_room_objective(state: GameState, room: DungeonRoom, dt_sec: float) -
 def _room_exits_unlocked(room: DungeonRoom) -> bool:
     return True
 
-
 def _create_room(
     room_id: int,
     dungeon: DungeonState,
@@ -722,17 +721,33 @@ def _create_room(
     key_press_rate: float = 0.0,
     force_reward_room: bool = False,
 ) -> DungeonRoom:
-    grid, difficulty, attempts = director.generate_next_room(stats, key_press_rate=key_press_rate)
+    exits = _exit_layout(room_id, dungeon)
+    
+    grid, difficulty, attempts = director.generate_next_room(stats, key_press_rate=key_press_rate, exits=exits)
+    
     engagement = director.last_engagement
     base_enemy_positions = _parse_generated_room(grid)
-    exits = _exit_layout(room_id, dungeon)
+    
     for pos in exits:
         _carve_exit_access(grid, pos)
+        
     spawn_points = _spawn_points_for_exits(exits)
     for sx, sy in spawn_points.values():
         grid[sy, sx] = FLOOR
+        
+    # --- NUOVO CODICE: Rimuoviamo le isole disconnesse ---
+    # Prendiamo il primo spawn point sicuro, o il centro stanza se non ci sono porte
+    safe_start = list(spawn_points.values())[0] if spawn_points else (GRID_WIDTH // 2, GRID_HEIGHT // 2)
+    _remove_disconnected_floors(grid, safe_start)
+    # -----------------------------------------------------
+
     reserved_points = set(exits.keys()) | set(spawn_points.values())
-    base_enemy_positions = {enemy for enemy in base_enemy_positions if enemy not in reserved_points}
+    
+    # Filtriamo i nemici che erano stati piazzati dal generatore nelle sacche ora riempite di muri
+    base_enemy_positions = {
+        enemy for enemy in base_enemy_positions 
+        if enemy not in reserved_points and int(grid[enemy[1], enemy[0]]) == FLOOR
+    }
 
     special_room_type = None
     is_elite = False
@@ -797,6 +812,28 @@ def _create_room(
     dungeon.rooms[room_id] = room
     _sync_final_door(dungeon)
     return room
+
+def _remove_disconnected_floors(grid: np.ndarray, start_pos: Vec2) -> None:
+    """Esegue un Flood Fill e riempie le sacche vuote isolate trasformandole in muri."""
+    height, width = grid.shape
+    reachable = set()
+    queue = [start_pos]
+    reachable.add(start_pos)
+    
+    while queue:
+        x, y = queue.pop(0)
+        for nx, ny in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]:
+            if 0 <= nx < width and 0 <= ny < height:
+                # Consideriamo passabili il FLOOR (0) e le EXIT (4)
+                if int(grid[ny, nx]) in {0, 4} and (nx, ny) not in reachable:
+                    reachable.add((nx, ny))
+                    queue.append((nx, ny))
+
+    # Trasforma in WALL tutti i FLOOR che l'inondazione non ha raggiunto
+    for y in range(height):
+        for x in range(width):
+            if int(grid[y, x]) == 0 and (x, y) not in reachable:
+                grid[y, x] = 1  # 1 = WALL
 
 
 def _enter_room(state: GameState, dungeon: DungeonState, room: DungeonRoom) -> None:

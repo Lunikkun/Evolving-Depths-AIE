@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import heapq
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
@@ -9,7 +9,7 @@ from config import ENEMY, EXIT, FLOOR, WALL
 
 
 class AStarVerifier:
-    """Verifies room reachability with A* and Manhattan heuristic."""
+    """Verifies room reachability simulating ONLY the actual carved exits."""
 
     def __init__(self, start: Tuple[int, int] = (0, 0)) -> None:
         self.start = start
@@ -26,29 +26,17 @@ class AStarVerifier:
 
     @staticmethod
     def _is_passable(cell_value: int) -> bool:
-        return cell_value in {FLOOR, ENEMY, EXIT}
+        return cell_value in {FLOOR, ENEMY, EXIT, 12}
 
-    def check_playability(self, grid: np.ndarray) -> bool:
-        if grid.size == 0:
-            return False
-
+    def check_path(self, grid: np.ndarray, start: Tuple[int, int], goal: Tuple[int, int]) -> bool:
         height, width = grid.shape
-        start = self.start
-
-        exit_positions = np.argwhere(grid == EXIT)
-        if len(exit_positions) == 0:
-            return False
-
-        exit_y, exit_x = exit_positions[0]
-        goal = (int(exit_x), int(exit_y))
-
-        if not self._is_passable(int(grid[start[1], start[0]])):
-            return False
+        
+        if not self._is_passable(int(grid[start[1], start[0]])): return False
+        if not self._is_passable(int(grid[goal[1], goal[0]])): return False
 
         open_heap: List[Tuple[int, Tuple[int, int]]] = []
         heapq.heappush(open_heap, (0, start))
-
-        g_score: Dict[Tuple[int, int], int] = {start: 0}
+        g_score = {start: 0}
 
         while open_heap:
             _, current = heapq.heappop(open_heap)
@@ -56,8 +44,7 @@ class AStarVerifier:
                 return True
 
             for neighbor in self._neighbors(current, width, height):
-                nx, ny = neighbor
-                if not self._is_passable(int(grid[ny, nx])):
+                if not self._is_passable(int(grid[neighbor[1], neighbor[0]])):
                     continue
 
                 tentative_g = g_score[current] + 1
@@ -67,3 +54,57 @@ class AStarVerifier:
                     heapq.heappush(open_heap, (score, neighbor))
 
         return False
+
+    def check_playability(self, grid: np.ndarray, exits: dict = None) -> bool:
+        if grid.size == 0:
+            return False
+
+        height, width = grid.shape
+        test_grid = grid.copy()
+        mid_x, mid_y = width // 2, height // 2
+
+        points_to_connect = []
+
+        # Simuliamo lo scavo SOLO per le porte che esistono davvero in questa stanza
+        if exits:
+            for (x, y) in exits.keys():
+                if y == 0:  # TOP
+                    for nx in range(mid_x - 1, mid_x + 2):
+                        test_grid[0, nx] = EXIT if nx == mid_x else FLOOR
+                        test_grid[1, nx] = FLOOR
+                        test_grid[2, nx] = FLOOR
+                    points_to_connect.append((mid_x, 2))
+                elif y == height - 1:  # BOTTOM
+                    for nx in range(mid_x - 1, mid_x + 2):
+                        test_grid[height - 1, nx] = EXIT if nx == mid_x else FLOOR
+                        test_grid[height - 2, nx] = FLOOR
+                        test_grid[height - 3, nx] = FLOOR
+                    points_to_connect.append((mid_x, height - 3))
+                elif x == 0:  # LEFT
+                    for ny in range(mid_y - 1, mid_y + 2):
+                        test_grid[ny, 0] = EXIT if ny == mid_y else FLOOR
+                        test_grid[ny, 1] = FLOOR
+                        test_grid[ny, 2] = FLOOR
+                    points_to_connect.append((2, mid_y))
+                elif x == width - 1:  # RIGHT
+                    for ny in range(mid_y - 1, mid_y + 2):
+                        test_grid[ny, width - 1] = EXIT if ny == mid_y else FLOOR
+                        test_grid[ny, width - 2] = FLOOR
+                        test_grid[ny, width - 3] = FLOOR
+                    points_to_connect.append((width - 3, mid_y))
+
+        # Se non ci sono porte (stanza di spawn isolata), usa il centro come punto base
+        if not points_to_connect:
+            points_to_connect.append((mid_x, mid_y))
+
+        # Aggiungi sempre la porta finale / obiettivo
+        test_grid[height - 2, width - 2] = FLOOR
+        points_to_connect.append((width - 2, height - 2))
+
+        # Valida che tutte le porte e l'obiettivo siano collegati tra loro
+        reference_point = points_to_connect[0]
+        for target in points_to_connect[1:]:
+            if not self.check_path(test_grid, reference_point, target):
+                return False
+                
+        return True

@@ -19,14 +19,35 @@ class RoomMetrics:
 class Observer:
     """Collects room metrics and persists logs for evaluation."""
 
-    def __init__(
-        self,
-        log_path: str = "logs/session_metrics.csv",
-        engagement_log_path: str = "logs/engagement_metrics.csv",
-    ) -> None:
+    from __future__ import annotations
+
+import csv
+import os
+import time
+import uuid
+from dataclasses import dataclass
+from typing import Optional
+
+# Assicurati di importare get_session_dir
+from game_logic.runtime_logger import log_event, get_session_dir
+
+@dataclass
+class RoomMetrics:
+    time_taken: float
+    hp_lost: int
+
+class Observer:
+    """Collects room metrics and persists logs for evaluation."""
+
+    def __init__(self) -> None:
         self.session_id = str(uuid.uuid4())
-        self.log_path = log_path
-        self.engagement_log_path = engagement_log_path
+        
+        # Recupera la cartella creata dal logger per questa sessione
+        session_dir = get_session_dir()
+        
+        # Imposta i percorsi dei file DENTRO la cartella della sessione
+        self.log_path = os.path.join(session_dir, "session_metrics.csv")
+        self.engagement_log_path = os.path.join(session_dir, "engagement_metrics.csv")
 
         self._room_start_time: Optional[float] = None
         self._room_start_hp: Optional[int] = None
@@ -35,47 +56,24 @@ class Observer:
         self._use_bandit: Optional[bool] = None
 
         self._base_header = [
-            "id_sessione",
-            "num_stanza",
-            "use_bandit",
-            "difficulty_chosen",
-            "time_taken",
-            "hp_lost",
+            "id_sessione", "num_stanza", "use_bandit", 
+            "difficulty_chosen", "time_taken", "hp_lost"
         ]
 
         self._engagement_header = [
-            "id_sessione",
-            "num_stanza",
-            "dungeon_room_id",
-            "difficulty_chosen",
-            "time_taken",
-            "hp_lost",
-            "flow_score",
-            "enemy_delay",
-            "enemy_spawned",
-            "enemy_hits_taken",
-            "damage_blocked",
-            "powerups_spawned",
-            "powerups_collected",
-            "heal_collected",
-            "speed_collected",
-            "teleport_present",
-            "teleport_uses",
-            "moves_made",
-            "key_press_rate",
-            "avg_enemy_distance",
-            "room_profile",
-            "objective_kind",
-            "elite_modifier",
-            "dungeon_event",
-            "relics_collected",
-            "relic_goal",
-            "final_door_open",
+            "id_sessione", "num_stanza", "dungeon_room_id", "difficulty_chosen",
+            "time_taken", "hp_lost", "flow_score", "enemy_delay",
+            "enemy_spawned", "enemy_hits_taken", "damage_blocked",
+            "powerups_spawned", "powerups_collected", "heal_collected",
+            "speed_collected", "teleport_present", "teleport_uses",
+            "moves_made", "key_press_rate", "avg_enemy_distance",
+            "room_profile", "objective_kind", "elite_modifier",
+            "dungeon_event", "relics_collected", "relic_goal", "final_door_open"
         ]
 
-        os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
         self._ensure_csv_header(self.log_path, self._base_header)
         self._ensure_csv_header(self.engagement_log_path, self._engagement_header)
+        
 
     def _ensure_csv_header(self, path: str, expected_header: list[str]) -> None:
         if not os.path.exists(path):

@@ -6,3 +6,5 @@ reports/
 
 venv
 
+dist/
+build/

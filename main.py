@@ -313,6 +313,46 @@ def _weighted_pick(weights: Dict[str, float], fallback: str) -> str:
             return key
     return fallback
 
+def _show_startup_menu(screen: pygame.Surface) -> dict:
+    """Menu to configure game parameters."""
+    import sys
+    import config
+    font_l = pygame.font.SysFont("consolas", 40, bold=True)
+    font_s = pygame.font.SysFont("consolas", 22)
+    
+    # Configurable variables
+    cfg = {"bandit": True, "density": 1.0, "rooms": 10, "relics": 3}
+    
+    while True:
+        screen.fill((20, 20, 25))
+        title = font_l.render("GAME CONFIGURATION", True, (255, 255, 255))
+        
+        opts = [
+            f"[1] Bandit Mode: {'ON' if cfg['bandit'] else 'OFF'}",
+            f"[O/P] Enemy Density: {cfg['density']:.1f}x",
+            f"[UP/DOWN] Total Rooms: {cfg['rooms']}",
+            f"[LEFT/RIGHT] Relics Needed: {cfg['relics']}",
+            "Press [ENTER] to START"
+        ]
+        
+        screen.blit(title, (screen.get_width()//2 - title.get_width()//2, 100))
+        for i, text in enumerate(opts):
+            surf = font_s.render(text, True, (200, 200, 200))
+            screen.blit(surf, (screen.get_width()//2 - surf.get_width()//2, 250 + i * 50))
+            
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT: pygame.quit(); sys.exit()
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_1: cfg['bandit'] = not cfg['bandit']
+                elif event.key == pygame.K_o: cfg['density'] = max(0.5, cfg['density'] - 0.1)
+                elif event.key == pygame.K_p: cfg['density'] = min(2.0, cfg['density'] + 0.1)
+                elif event.key == pygame.K_UP: cfg['rooms'] = min(50, cfg['rooms'] + 1)
+                elif event.key == pygame.K_DOWN: cfg['rooms'] = max(5, cfg['rooms'] - 1)
+                elif event.key == pygame.K_LEFT: cfg['relics'] = max(1, cfg['relics'] - 1)
+                elif event.key == pygame.K_RIGHT: cfg['relics'] = min(10, cfg['relics'] + 1)
+                elif event.key == pygame.K_RETURN: return cfg       
 
 def _assign_enemy_roles(
     positions: Set[Vec2],
@@ -1076,65 +1116,66 @@ def _draw_blackout_overlay(screen: pygame.Surface, state: GameState, room: Dunge
     return
 
 
-def draw_hud(screen: pygame.Surface, font: Optional[pygame.font.Font], state: GameState, dungeon: DungeonState) -> None:
-    hud = pygame.Rect(0, GRID_HEIGHT * TILE_SIZE, SCREEN_WIDTH, SCREEN_HEIGHT - GRID_HEIGHT * TILE_SIZE)
-    pygame.draw.rect(screen, HUD_BG, hud)
+def draw_hud(screen: pygame.Surface, font: Optional[pygame.font.Font], state, dungeon) -> None:
+    # 1. Draw HUD Background
+    hud_height = SCREEN_HEIGHT - (GRID_HEIGHT * TILE_SIZE)
+    hud_rect = pygame.Rect(0, GRID_HEIGHT * TILE_SIZE, SCREEN_WIDTH, hud_height)
+    pygame.draw.rect(screen, HUD_BG, hud_rect)
 
+    # 2. Progress Bars (Keep these on the left)
+    base_y = GRID_HEIGHT * TILE_SIZE
+    
+    # HP Bar
     hp_ratio = max(0.0, min(1.0, state.hp / max(1, MAX_HP)))
-    pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, GRID_HEIGHT * TILE_SIZE + 12, 220, 18))
-    pygame.draw.rect(screen, (208, 77, 77), pygame.Rect(16, GRID_HEIGHT * TILE_SIZE + 12, int(220 * hp_ratio), 18))
+    pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, base_y + 12, 220, 18))
+    pygame.draw.rect(screen, (208, 77, 77), pygame.Rect(16, base_y + 12, int(220 * hp_ratio), 18))
 
+    # Relic Bar
     relic_ratio = dungeon.collected_relics / max(1, dungeon.relic_goal)
-    pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, GRID_HEIGHT * TILE_SIZE + 40, 220, 14))
-    pygame.draw.rect(screen, COLORS[RELIC], pygame.Rect(16, GRID_HEIGHT * TILE_SIZE + 40, int(220 * relic_ratio), 14))
+    pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, base_y + 40, 220, 14))
+    pygame.draw.rect(screen, COLORS[RELIC], pygame.Rect(16, base_y + 40, int(220 * relic_ratio), 14))
 
+    # Flow Bar
     flow_ratio = max(0.0, min(1.0, state.flow_score))
-    pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, GRID_HEIGHT * TILE_SIZE + 62, 220, 14))
-    pygame.draw.rect(screen, (98, 168, 230), pygame.Rect(16, GRID_HEIGHT * TILE_SIZE + 62, int(220 * flow_ratio), 14))
+    pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, base_y + 62, 220, 14))
+    pygame.draw.rect(screen, (98, 168, 230), pygame.Rect(16, base_y + 62, int(220 * flow_ratio), 14))
 
-    panel_x = 16
-    panel_y = GRID_HEIGHT * TILE_SIZE + 84
-    panel_h = 28
-    icon_gap = 76
+    # 3. Powerups (Keep these below the bars)
+    panel_x, panel_y = 16, base_y + 84
     for idx, p_type in enumerate([POWER_HEAL, POWER_SPEED]):
-        box = pygame.Rect(panel_x + idx * icon_gap, panel_y, 64, panel_h)
+        box = pygame.Rect(panel_x + idx * 76, panel_y, 64, 28)
         pygame.draw.rect(screen, PANEL_BG, box, border_radius=6)
         pygame.draw.rect(screen, COLORS[p_type], box, 2, border_radius=6)
-        _draw_powerup_icon(screen, p_type, (box.x + 16, box.y + box.height // 2), 9)
-
-        active = False
-        status_value = "pick"
-        if p_type == POWER_SPEED:
-            active = state.speed_boost_steps > 0
-            status_value = f"{state.speed_boost_steps}"
-        elif p_type == POWER_HEAL:
-            status_value = f"+{HEAL_AMOUNT}"
-
-        if active:
+        _draw_powerup_icon(screen, p_type, (box.x + 16, box.y + 14), 9)
+        
+        if p_type == POWER_SPEED and state.speed_boost_steps > 0:
             pygame.draw.rect(screen, (245, 245, 245), box, 2, border_radius=6)
 
-        if font is not None:
-            label = POWERUP_LABELS[p_type]
-            screen.blit(font.render(label, True, TEXT_COLOR), (box.x + 29, box.y + 2))
-            screen.blit(font.render(status_value, True, TEXT_COLOR), (box.x + 29, box.y + 13))
-
+    # 4. HUD Text (Right side, using dynamic vertical spacing to prevent overlap)
     if font is not None:
+        text_x = 260  # Shifted to the right to avoid the bars
+        line_height = 20
+        current_y = base_y + 10
+        
         dname = DIFFICULTY_NAMES.get(state.difficulty, str(state.difficulty))
-        engagement_indicator = "↑ RISING" if state.flow_score > 0.6 else ("↓ FALLING" if state.flow_score < 0.4 else "→ STABLE")
-        line1 = f"Stanza #{state.current_room_id}  |  Diff: {dname}  |  Eng: {state.flow_score:.2f} {engagement_indicator}"
-        line2 = (
-            f"Reliquie: {dungeon.collected_relics}/{dungeon.relic_goal}  —  raggiungi la porta finale"
-        )
-        line3 = f"HP: {state.hp}/{MAX_HP}"
-        line4 = "Legenda: Rosso=Nemico  Azzurro=Porta  Bianco=Reliquia"
-        hud_x = 4
-        screen.blit(font.render(line1, True, TEXT_COLOR), (hud_x, GRID_HEIGHT * TILE_SIZE + 4))
-        screen.blit(font.render(line2, True, TEXT_COLOR), (hud_x, GRID_HEIGHT * TILE_SIZE + 22))
-        screen.blit(font.render(line3, True, TEXT_COLOR), (hud_x, GRID_HEIGHT * TILE_SIZE + 40))
-        screen.blit(font.render(line4, True, TEXT_COLOR), (hud_x, GRID_HEIGHT * TILE_SIZE + 58))
-        if state.status_timer > 0 and state.status_message:
-            screen.blit(font.render(state.status_message, True, (255, 232, 160)), (hud_x, GRID_HEIGHT * TILE_SIZE + 118))
+        engagement = "↑ RISING" if state.flow_score > 0.6 else ("↓ FALLING" if state.flow_score < 0.4 else "→ STABLE")
+        
+        lines = [
+            f"Room: #{state.current_room_id} | Diff: {dname} | Eng: {state.flow_score:.2f} {engagement}",
+            f"Relics: {dungeon.collected_relics}/{dungeon.relic_goal} — Reach the exit",
+            f"HP: {state.hp}/{MAX_HP}",
+            "Legend: Red=Enemy | Blue=Door | White=Relic"
+        ]
+        
+        for line in lines:
+            screen.blit(font.render(line, True, TEXT_COLOR), (text_x, current_y))
+            current_y += line_height
 
+        # Status Message (Separate from stats)
+        if state.status_timer > 0 and state.status_message:
+            screen.blit(font.render(state.status_message, True, (255, 232, 160)), (text_x, current_y + 10))
+
+    # 5. Minimap
     draw_minimap(screen, state, dungeon, font)
 
 
@@ -1294,14 +1335,21 @@ def _find_transition_room(state: GameState, room: DungeonRoom) -> Optional[int]:
 
 
 def _create_font() -> Optional[pygame.font.Font]:
-    if os.getenv("AIE_ENABLE_FONT", "0") != "1":
-        return None
+    """Inizializzazione sicura del font che evita import ciclici."""
     try:
-        pygame.font.init()
-        return pygame.font.SysFont("consolas", 17)
-    except Exception:
+        # 1. Non chiamare init() qui, è inutile se crasha
+        if not pygame.get_init():
+            pygame.init()
+        
+        # 2. Verifica se il modulo font è attivo
+        if hasattr(pygame, 'font'):
+            # Usa il font di default che non richiede caricamenti complessi
+            return pygame.font.Font(None, 24)
         return None
-
+    except Exception:
+        # Se fallisce, restituiamo None e il gioco continuerà senza testi 
+        # (almeno non crasha!)
+        return None
 
 def _new_game_state(start_room: int) -> GameState:
     return GameState(
@@ -1411,21 +1459,45 @@ def run_self_test() -> int:
     log_event("SELF_TEST success")
     return 0
 
-
 def run(max_frames: Optional[int] = None) -> None:
     pygame.init()
+    pygame.font.init()
+    
+    # Setup Screen
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN | pygame.SCALED)
     clock = pygame.time.Clock()
+    
+    # Safe font initialization
     font = _create_font()
+    if font is None:
+        font = pygame.font.SysFont("Arial", 17)
 
-    director = Director(use_bandit=USE_BANDIT)
+    # --- STARTUP MENU: CONFIGURATION ---
+    cfg = _show_startup_menu(screen)
+    log_event(f"MENU_CONFIG: {cfg}")
+    
+    # Apply configurations
+    import config
+    config.USE_BANDIT = cfg['bandit']
+    config.ENEMY_DENSITY_MULT = cfg['density']
+    
+    # Initialize systems
+    director = Director(use_bandit=cfg['bandit'])
     observer = Observer()
     dungeon = _build_dungeon()
+    
+    # Apply dynamic room/relic settings to state/dungeon
+    # Ensure these properties exist in your state object
     state = _new_game_state(dungeon.start_room)
+    state.relic_goal = cfg['relics']
+    state.max_rooms = cfg['rooms']
 
+    # Setup initial room
     room = _create_room(state.current_room_id, dungeon, director, None)
     _enter_room(state, dungeon, room)
-    observer.start_room(state.room_step, state.difficulty, USE_BANDIT, state.hp)
+    
+    # Log session start
+    observer.start_room(state.room_step, state.difficulty, cfg['bandit'], state.hp)
 
     running = True
     frames = 0
@@ -1433,6 +1505,7 @@ def run(max_frames: Optional[int] = None) -> None:
         dt = clock.tick(FPS)
         dt_sec = dt / 1000.0
         frames += 1
+        
         if state.status_timer > 0:
             state.status_timer = max(0.0, state.status_timer - dt_sec)
 
@@ -1447,21 +1520,16 @@ def run(max_frames: Optional[int] = None) -> None:
                     state.paused = not state.paused
                 elif not state.paused:
                     dx, dy = 0, 0
-                    if event.key == pygame.K_UP:
-                        dy = -1
-                    elif event.key == pygame.K_DOWN:
-                        dy = 1
-                    elif event.key == pygame.K_LEFT:
-                        dx = -1
-                    elif event.key == pygame.K_RIGHT:
-                        dx = 1
+                    if event.key == pygame.K_UP: dy = -1
+                    elif event.key == pygame.K_DOWN: dy = 1
+                    elif event.key == pygame.K_LEFT: dx = -1
+                    elif event.key == pygame.K_RIGHT: dx = 1
                     if dx != 0 or dy != 0:
                         _move_player(state, room, dungeon, dx, dy)
 
         if state.paused:
             state.time_menu_open += dt_sec
-
-        if not state.paused:
+        else:
             state.enemy_timer += dt_sec
             _update_in_room_flow(state, director)
             _update_room_objective(state, room, dt_sec)
@@ -1469,45 +1537,57 @@ def run(max_frames: Optional[int] = None) -> None:
                 _move_enemies(state, room)
                 state.enemy_timer = 0.0
 
+        # Room Transition Logic
         target_room = _find_transition_room(state, room)
         if target_room is not None:
             snap = _engagement_snapshot(state, dungeon)
             metrics = observer.complete_room(state.hp, snap)
             _kpr = snap.get("key_press_rate", 0.0)
+            
             state.flow_score = director.bandit.reward_from_metrics(metrics.time_taken, metrics.hp_lost, _kpr)
             _rotate_dungeon_event(dungeon, state.room_step + 1)
             _advance_predator(dungeon, target_room)
+            
             if target_room not in dungeon.rooms:
                 room = _create_room(target_room, dungeon, director, (metrics.time_taken, metrics.hp_lost), key_press_rate=_kpr, force_reward_room=False)
             else:
                 room = dungeon.rooms[target_room]
+                
             state.room_step += 1
             state.previous_room_id = state.current_room_id
             _enter_room(state, dungeon, room)
-            observer.start_room(state.room_step, state.difficulty, USE_BANDIT, state.hp)
+            observer.start_room(state.room_step, state.difficulty, cfg['bandit'], state.hp)
 
+        # Win/Loss Conditions
         if room.final_door_pos is not None and state.player_pos == room.final_door_pos:
             if int(room.grid[room.final_door_pos[1], room.final_door_pos[0]]) == DOOR_OPEN:
-                state.is_win = True
-                running = False
+                # Check relic goal before allowing exit
+                if state.relics_collected >= state.relic_goal:
+                    state.is_win = True
+                    running = False
 
         if state.hp <= 0:
             state.game_over = True
             running = False
 
+        # Rendering
         _update_caption(state, dungeon)
         screen.fill((0, 0, 0))
         draw_grid(screen, room, state.player_pos)
         _draw_blackout_overlay(screen, state, room, dungeon)
-        draw_hud(screen, font, state, dungeon)
-        if state.paused:
-            draw_pause_screen(screen, font, state, dungeon, room)
+        
+        if font:
+            draw_hud(screen, font, state, dungeon)
+            if state.paused:
+                draw_pause_screen(screen, font, state, dungeon, room)
+        
         pygame.display.flip()
 
     if state.is_win:
         log_event("MAIN win_dungeon_exit")
     elif state.game_over:
         log_event("MAIN game_over")
+        
     log_event("MAIN shutdown")
     pygame.quit()
 

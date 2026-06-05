@@ -40,9 +40,9 @@ class RoomGenerator:
 
     def _enemy_count(self, difficulty_level: int, engagement: float) -> int:
         base = {
-            0: 2,
-            1: 4,
-            2: 7,
+            0: 4,
+            1: 7,
+            2: 12,
         }.get(difficulty_level, 4)
         adaptive = round((engagement - 0.5) * 6)
         jitter = random.choice([-2, -1, 0, 1, 2])
@@ -53,12 +53,12 @@ class RoomGenerator:
 
         if difficulty_level == 0:
             weights = {
-                "arena": 0.42,
+                "arena": 0.35,
                 "cave": 0.25,
-                "corridor": 0.10,
-                "pillars": 0.28,
+                "corridor": 0.13,
+                "pillars": 0.30,
                 "crossroads": 0.22,
-                "islands": 0.20,
+                "islands": 0.22,
             }
         elif difficulty_level == 1:
             weights = {

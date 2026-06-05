@@ -7,27 +7,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
-from game_logic.runtime_logger import log_event
-
-
-@dataclass
-class RoomMetrics:
-    time_taken: float
-    hp_lost: int
-
-
-class Observer:
-    """Collects room metrics and persists logs for evaluation."""
-
-    from __future__ import annotations
-
-import csv
-import os
-import time
-import uuid
-from dataclasses import dataclass
-from typing import Optional
-
 # Assicurati di importare get_session_dir
 from game_logic.runtime_logger import log_event, get_session_dir
 

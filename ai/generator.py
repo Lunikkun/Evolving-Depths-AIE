@@ -8,8 +8,6 @@ from config import ENEMY, EXIT, FLOOR, GRID_HEIGHT, GRID_WIDTH, WALL
 
 
 class RoomGenerator:
-    """Search-based PCG via cellular automata refinement."""
-
     def __init__(self, width: int = GRID_WIDTH, height: int = GRID_HEIGHT) -> None:
         self.width = width
         self.height = height
@@ -53,47 +51,42 @@ class RoomGenerator:
 
         if difficulty_level == 0:
             weights = {
-                "arena": 0.35,
-                "cave": 0.25,
-                "corridor": 0.13,
-                "pillars": 0.30,
-                "crossroads": 0.22,
-                "islands": 0.22,
+                "arena":      0.50,
+                "pillars":    0.40,
+                "cave":       0.10,
+                "corridor":   0.05,
+                "crossroads": 0.10,
+                "islands":    0.15,
             }
         elif difficulty_level == 1:
             weights = {
-                "arena": 0.18,
-                "cave": 0.24,
-                "corridor": 0.24,
-                "pillars": 0.18,
-                "crossroads": 0.24,
-                "islands": 0.20,
+                "arena":      0.20,
+                "pillars":    0.20,
+                "cave":       0.30,
+                "corridor":   0.25,
+                "crossroads": 0.15,
+                "islands":    0.10,
             }
         else:
             weights = {
-                "arena": 0.08,
-                "cave": 0.18,
-                "corridor": 0.32,
-                "pillars": 0.12,
-                "crossroads": 0.30,
-                "islands": 0.16,
+                "arena":      0.05,
+                "pillars":    0.05,
+                "cave":       0.40,
+                "corridor":   0.40,
+                "crossroads": 0.15,
+                "islands":    0.10,
             }
 
-        # Engagement basso: piu stanze leggibili/aperti. Engagement alto: piu pressione e percorsi stretti.
-        weights["arena"] += (0.5 - engagement) * 0.35
-        weights["corridor"] += (engagement - 0.5) * 0.45
-        weights["cave"] += abs(engagement - 0.5) * 0.10
-        weights["pillars"] += (0.45 - abs(engagement - 0.45)) * 0.20
-        weights["crossroads"] += engagement * 0.20
-        weights["islands"] += (0.65 - abs(engagement - 0.65)) * 0.18
+        weights["arena"]    += (0.5 - engagement) * 0.40
+        weights["pillars"]  += (0.5 - engagement) * 0.20
+        weights["corridor"] += (engagement - 0.5) * 0.50
+        weights["cave"]     += (engagement - 0.5) * 0.30
 
         return self._weighted_choice(weights, fallback="cave")
 
     def _init_by_profile(self, profile: str, wall_prob: float) -> np.ndarray:
         if profile == "arena":
             grid = np.full((self.height, self.width), FLOOR, dtype=np.int32)
-            # Use wall_prob directly so engagement drives obstacle density.
-            # Clamped: even at low engagement arena stays sparse (≤0.30).
             obstacle_prob = max(0.18, min(0.30, wall_prob * 0.75))
             mask = np.random.rand(self.height, self.width) < obstacle_prob
             grid[mask] = WALL
@@ -143,7 +136,6 @@ class RoomGenerator:
                 x = max(0, min(self.width - 1, x + dx))
                 y = max(0, min(self.height - 1, y + dy))
                 grid[y, x] = FLOOR
-                # Thicken paths to avoid single-cell chokepoints everywhere.
                 if random.random() < 0.35:
                     nx = max(0, min(self.width - 1, x + random.choice([-1, 0, 1])))
                     ny = max(0, min(self.height - 1, y + random.choice([-1, 0, 1])))
@@ -157,8 +149,6 @@ class RoomGenerator:
         ).astype(np.int32)
 
     def _step_automata_light(self, grid: np.ndarray) -> np.ndarray:
-        """Less aggressive CA step: a wall only dies if it has 0 wall neighbours.
-        Preserves scattered obstacles that _step_automata would destroy."""
         next_grid = grid.copy()
         for y in range(1, self.height - 1):
             for x in range(1, self.width - 1):
@@ -173,7 +163,6 @@ class RoomGenerator:
             return grid
 
         if profile == "arena":
-            # Preserve scattered obstacles: only remove truly isolated single walls.
             return self._step_automata_light(grid)
 
         if profile == "pillars":
@@ -185,11 +174,9 @@ class RoomGenerator:
         if profile == "islands":
             return self._step_automata(grid)
 
-        # Corridor rooms should preserve carved structure; use light smoothing.
         return self._step_automata(grid)
 
     def _apply_random_transform(self, grid: np.ndarray) -> np.ndarray:
-        # Keep shape stable on non-square grids by using only 0 or 180-degree rotations.
         k = random.choice([0, 2])
         transformed = np.rot90(grid, k=k)
         if random.random() < 0.5:
@@ -228,7 +215,6 @@ class RoomGenerator:
         grid = self._apply_profile_post(profile, grid)
         grid = self._apply_random_transform(grid)
 
-        # Keep borders mostly closed while preserving entrance/exit cells.
         grid[0, :] = WALL
         grid[:, 0] = WALL
         grid[self.height - 1, :] = WALL
@@ -242,7 +228,6 @@ class RoomGenerator:
         grid[entrance[1], entrance[0]] = FLOOR
         grid[exit_cell[1], exit_cell[0]] = EXIT
 
-        # Ensure immediate movement from entrance and to exit is possible if feasible.
         if self.width > 1:
             grid[0, 1] = FLOOR
         if self.height > 1:
@@ -261,7 +246,6 @@ class RoomGenerator:
         for y, x in floor_positions:
             if (x, y) in [entrance, exit_cell]:
                 continue
-            # Keep start and exit zones readable/fair.
             if abs(x - entrance[0]) + abs(y - entrance[1]) < 4:
                 continue
             if abs(x - exit_cell[0]) + abs(y - exit_cell[1]) < 3:

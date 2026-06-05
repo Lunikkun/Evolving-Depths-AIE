@@ -87,24 +87,24 @@ PROFILE_LABELS: dict[str, str] = {
 }
 
 OBJECTIVE_LABELS: dict[str, str] = {
-    "none": "Nessun obiettivo",
-    "survive": "Sopravvivi 20s",
-    "eliminate": "Elimina tutti",
-    "altar": "Raggiungi l'altare",
-    "protect_relic": "Proteggi la reliquia",
+    "none": "No objective",
+    "survive": "Survive 20s",
+    "eliminate": "Eliminate all",
+    "altar": "Reach the altar",
+    "protect_relic": "Protect the relic",
 }
 
 ELITE_LABELS: dict[str, str] = {
-    "fast_enemies": "Nemici rapidi",
-    "fog": "Nebbia fitta",
-    "half_heal": "Cure dimezzate",
-    "double_relic": "Doppia reliquia",
+    "fast_enemies": "Fast Enemies",
+    "fog": "Dense Fog",
+    "half_heal": "Halved Heals",
+    "double_relic": "Double Relic",
 }
 
 EVENT_LABELS: dict[str, str] = {
-    "calm": "Calma instabile",
+    "calm": "Unstable Calm",
     "blackout": "Blackout",
-    "infestation": "Infestazione",
+    "infestation": "Infestation",
     "predator_hunt": "Predator Hunt",
 }
 
@@ -265,15 +265,15 @@ def _objective_status(room: DungeonRoom) -> str:
     objective = room.objective
     label = OBJECTIVE_LABELS.get(objective.kind, objective.kind)
     if objective.kind == "none":
-        return "Obiettivo: opzionale"
+        return "Objective: optional"
     if objective.completed:
-        return f"Obiettivo opzionale: {label} [OK]"
+        return f"Optional objective: {label} [OK]"
     if objective.kind in {"survive", "protect_relic"}:
         remaining = max(0.0, objective.timer_target - objective.progress)
-        return f"Obiettivo opzionale: {label} ({remaining:.0f}s)"
+        return f"Optional objective: {label} ({remaining:.0f}s)"
     if objective.kind == "altar" and objective.altar_pos is not None:
-        return f"Obiettivo opzionale: {label} @ {objective.altar_pos[0]},{objective.altar_pos[1]}"
-    return f"Obiettivo opzionale: {label}"
+        return f"Optional objective: {label} @ {objective.altar_pos[0]},{objective.altar_pos[1]}"
+    return f"Optional objective: {label}"
 
 
 def _objective_brief(room: DungeonRoom) -> str:
@@ -314,13 +314,11 @@ def _weighted_pick(weights: Dict[str, float], fallback: str) -> str:
     return fallback
 
 def _show_startup_menu(screen: pygame.Surface) -> dict:
-    """Menu to configure game parameters."""
     import sys
     import config
     font_l = pygame.font.SysFont("consolas", 40, bold=True)
     font_s = pygame.font.SysFont("consolas", 22)
-    
-    # Configurable variables
+
     cfg = {"bandit": True, "density": 1.0, "rooms": 10, "relics": 3}
     
     while True:
@@ -364,9 +362,11 @@ def _assign_enemy_roles(
 ) -> Dict[Vec2, EnemyActor]:
     enemies: Dict[Vec2, EnemyActor] = {}
     weights = _role_weights(difficulty)
+    hp_by_difficulty = {0: 2, 1: 3, 2: 4}
+    enemy_hp = hp_by_difficulty.get(difficulty, 2)
     for pos in positions:
         role = _weighted_pick(weights, fallback="stalker")
-        enemies[pos] = EnemyActor(role=role, cooldown=0, hp=1)
+        enemies[pos] = EnemyActor(role=role, cooldown=0, hp=enemy_hp)
     return enemies
 
 
@@ -396,12 +396,21 @@ def _engagement_snapshot(state: GameState, dungeon: DungeonState) -> dict:
         "powerups_collected": state.powerups_collected,
         "heal_collected": state.heal_collected,
         "speed_collected": state.speed_collected,
+        "shield_collected": state.shield_collected,
         "teleport_present": state.teleports is not None,
         "teleport_uses": state.teleport_uses,
         "moves_made": state.moves_made,
         "key_press_rate": key_press_rate,
         "avg_enemy_distance": avg_enemy_distance,
+        "enemy_kills": state.enemy_kills,
+        "enemies_remaining": len(state.enemies),
+        "powerups_remaining": len(state.powerups),
+        "room_entries": state.room_entries,
+        "combo_streak": state.combo_streak,
+        "speed_boost_steps": state.speed_boost_steps,
+        "shield_hits": state.shield_hits,
         "room_profile": state.room_profile,
+        "room_special_type": state.room_special_type,
         "relics_collected": dungeon.collected_relics,
         "relic_goal": dungeon.relic_goal,
         "final_door_open": dungeon.collected_relics >= dungeon.relic_goal,
@@ -625,7 +634,7 @@ def _layout_distances(adjacency: Dict[int, Set[int]], start_room: int) -> Dict[i
             if nxt in dist:
                 continue
             dist[nxt] = dist[cur] + 1
-            queue.append(nxt)
+            q.append(nxt)
     return dist
 
 
@@ -712,17 +721,17 @@ def _grant_objective_reward(state: GameState, room: DungeonRoom) -> None:
     objective.reward_granted = True
     if objective.kind == "survive":
         state.shield_hits += 1
-        _set_status(state, "Ricompensa obiettivo: +1 shield")
+        _set_status(state, "Objective reward: +1 shield")
     elif objective.kind == "eliminate":
         state.speed_boost_steps += 4
-        _set_status(state, "Ricompensa obiettivo: speed boost")
+        _set_status(state, "Objective reward: speed boost")
     elif objective.kind == "altar":
         state.hp = min(MAX_HP + state.overheal_hp, state.hp + 12)
-        _set_status(state, "Ricompensa obiettivo: +12 HP")
+        _set_status(state, "Objective reward: +12 HP")
     elif objective.kind == "protect_relic":
         state.overheal_hp = min(MAX_OVERHEAL, state.overheal_hp + 10)
         state.hp = min(MAX_HP + state.overheal_hp, state.hp + 10)
-        _set_status(state, "Ricompensa obiettivo: overheal")
+        _set_status(state, "Objective reward: overheal")
 
 
 def _update_room_objective(state: GameState, room: DungeonRoom, dt_sec: float) -> None:
@@ -775,15 +784,20 @@ def _create_room(
     for sx, sy in spawn_points.values():
         grid[sy, sx] = FLOOR
         
-    # --- NUOVO CODICE: Rimuoviamo le isole disconnesse ---
-    # Prendiamo il primo spawn point sicuro, o il centro stanza se non ci sono porte
     safe_start = list(spawn_points.values())[0] if spawn_points else (GRID_WIDTH // 2, GRID_HEIGHT // 2)
-    _remove_disconnected_floors(grid, safe_start)
-    # -----------------------------------------------------
+    all_starts = set(spawn_points.values()) if spawn_points else {safe_start}
+    _remove_disconnected_floors(grid, all_starts)
+
+    spawn_list = list(spawn_points.values())
+    for sp in spawn_list[1:]:
+        if not _is_reachable(grid, safe_start, sp):
+            _carve_corridor(grid, safe_start, sp)
+
+    _clear_small_wall_islands(grid)
+    _remove_disconnected_floors(grid, all_starts)
 
     reserved_points = set(exits.keys()) | set(spawn_points.values())
     
-    # Filtriamo i nemici che erano stati piazzati dal generatore nelle sacche ora riempite di muri
     base_enemy_positions = {
         enemy for enemy in base_enemy_positions 
         if enemy not in reserved_points and int(grid[enemy[1], enemy[0]]) == FLOOR
@@ -853,27 +867,104 @@ def _create_room(
     _sync_final_door(dungeon)
     return room
 
-def _remove_disconnected_floors(grid: np.ndarray, start_pos: Vec2) -> None:
-    """Esegue un Flood Fill e riempie le sacche vuote isolate trasformandole in muri."""
+def _remove_disconnected_floors(grid: np.ndarray, start_positions) -> None:
     height, width = grid.shape
-    reachable = set()
-    queue = [start_pos]
-    reachable.add(start_pos)
-    
+    reachable: Set[Vec2] = set()
+    if isinstance(start_positions, tuple):
+        queue: list = [start_positions]
+        reachable.add(start_positions)
+    else:
+        queue = [p for p in start_positions if 0 <= p[0] < width and 0 <= p[1] < height]
+        reachable.update(queue)
+
     while queue:
         x, y = queue.pop(0)
         for nx, ny in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]:
             if 0 <= nx < width and 0 <= ny < height:
-                # Consideriamo passabili il FLOOR (0) e le EXIT (4)
-                if int(grid[ny, nx]) in {0, 4} and (nx, ny) not in reachable:
+                if int(grid[ny, nx]) in {FLOOR, EXIT} and (nx, ny) not in reachable:
                     reachable.add((nx, ny))
                     queue.append((nx, ny))
 
-    # Trasforma in WALL tutti i FLOOR che l'inondazione non ha raggiunto
     for y in range(height):
         for x in range(width):
-            if int(grid[y, x]) == 0 and (x, y) not in reachable:
-                grid[y, x] = 1  # 1 = WALL
+            if int(grid[y, x]) == FLOOR and (x, y) not in reachable:
+                grid[y, x] = WALL
+
+
+def _is_reachable(grid: np.ndarray, src: Vec2, dst: Vec2) -> bool:
+    height, width = grid.shape
+    walkable = {FLOOR, EXIT, DOOR_OPEN}
+    visited: Set[Vec2] = {src}
+    queue: deque = deque([src])
+    while queue:
+        x, y = queue.popleft()
+        if (x, y) == dst:
+            return True
+        for nx, ny in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]:
+            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in visited:
+                if int(grid[ny, nx]) in walkable:
+                    visited.add((nx, ny))
+                    queue.append((nx, ny))
+    return False
+
+
+def _carve_corridor(grid: np.ndarray, src: Vec2, dst: Vec2) -> None:
+    x, y = src
+    tx, ty = dst
+    _carve_corridor_brush(grid, src)
+    while x != tx:
+        x += 1 if tx > x else -1
+        if 0 < x < GRID_WIDTH - 1 and 0 < y < GRID_HEIGHT - 1:
+            _carve_corridor_brush(grid, (x, y))
+    while y != ty:
+        y += 1 if ty > y else -1
+        if 0 < x < GRID_WIDTH - 1 and 0 < y < GRID_HEIGHT - 1:
+            _carve_corridor_brush(grid, (x, y))
+    _carve_corridor_brush(grid, dst)
+
+
+def _carve_corridor_brush(grid: np.ndarray, center: Vec2) -> None:
+    cx, cy = center
+    for y in range(max(1, cy - 1), min(GRID_HEIGHT - 1, cy + 2)):
+        for x in range(max(1, cx - 1), min(GRID_WIDTH - 1, cx + 2)):
+            if int(grid[y, x]) not in {EXIT, DOOR_LOCKED, DOOR_OPEN}:
+                grid[y, x] = FLOOR
+
+
+def _clear_small_wall_islands(grid: np.ndarray) -> None:
+    to_clear: Set[Vec2] = set()
+
+    for y in range(1, GRID_HEIGHT - 1):
+        for x in range(1, GRID_WIDTH - 1):
+            if int(grid[y, x]) != WALL:
+                continue
+            neighbors = [
+                int(grid[y - 1, x]),
+                int(grid[y + 1, x]),
+                int(grid[y, x - 1]),
+                int(grid[y, x + 1]),
+            ]
+            floorish = sum(value in {FLOOR, EXIT, DOOR_OPEN} for value in neighbors)
+            if floorish >= 3:
+                to_clear.add((x, y))
+
+    for y in range(1, GRID_HEIGHT - 2):
+        for x in range(1, GRID_WIDTH - 2):
+            block = ((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1))
+            if not all(int(grid[by, bx]) == WALL for bx, by in block):
+                continue
+            ring = [
+                (x - 1, y), (x - 1, y + 1),
+                (x + 2, y), (x + 2, y + 1),
+                (x, y - 1), (x + 1, y - 1),
+                (x, y + 2), (x + 1, y + 2),
+            ]
+            floorish_ring = sum(int(grid[ry, rx]) in {FLOOR, EXIT, DOOR_OPEN} for rx, ry in ring)
+            if floorish_ring >= 6:
+                to_clear.update(block)
+
+    for x, y in to_clear:
+        grid[y, x] = FLOOR
 
 
 def _enter_room(state: GameState, dungeon: DungeonState, room: DungeonRoom) -> None:
@@ -920,9 +1011,9 @@ def _update_caption(state: GameState, dungeon: DungeonState) -> None:
     dname = DIFFICULTY_NAMES.get(state.difficulty, str(state.difficulty))
     engagement_indicator = "↑" if state.flow_score > 0.6 else ("↓" if state.flow_score < 0.4 else "→")
     pygame.display.set_caption(
-        f"Evolving Depths | Stanza #{state.current_room_id} | Step {state.room_step} | "
+        f"Evolving Depths | Room #{state.current_room_id} | Step {state.room_step} | "
         f"Diff {dname} | Engagement {state.flow_score:.2f} {engagement_indicator} | "
-        f"Reliquie {dungeon.collected_relics}/{dungeon.relic_goal} | Speed {state.speed_boost_steps} | Shield {state.shield_hits} | Combo {state.combo_streak}"
+        f"Relics {dungeon.collected_relics}/{dungeon.relic_goal} | Speed {state.speed_boost_steps} | Shield {state.shield_hits} | Combo {state.combo_streak}"
     )
 
 
@@ -992,11 +1083,10 @@ def draw_minimap(screen: pygame.Surface, state: GameState, dungeon: DungeonState
         pygame.draw.rect(screen, (15, 15, 15), rect, 1)
 
     if font is not None:
-        screen.blit(font.render("Mappa Stanze", True, TEXT_COLOR), (panel.x + 12, panel.y + 4))
-        # Timer affianco alla griglia — in alto a destra del pannello
+        screen.blit(font.render("Room Map", True, TEXT_COLOR), (panel.x + 12, panel.y + 4))
         room_elapsed = max(0.0, time.time() - state.room_start_time)
         total_elapsed = max(0.0, time.time() - state.game_start_time - state.time_menu_open)
-        timer_text = f"Stanza {room_elapsed:.1f}s  |  Tot {total_elapsed:.1f}s"
+        timer_text = f"Room {room_elapsed:.1f}s  |  Total {total_elapsed:.1f}s"
         screen.blit(font.render(timer_text, True, (255, 255, 255)), (panel.x + 170, panel.y + 4))
 
 
@@ -1110,37 +1200,28 @@ def draw_grid(screen: pygame.Surface, room: DungeonRoom, player_pos: Vec2) -> No
     pygame.draw.rect(screen, PLAYER_COLOR, pygame.Rect(px * TILE_SIZE, py * TILE_SIZE, TILE_SIZE, TILE_SIZE))
 
 
-
-
 def _draw_blackout_overlay(screen: pygame.Surface, state: GameState, room: DungeonRoom, dungeon: DungeonState) -> None:
     return
 
 
 def draw_hud(screen: pygame.Surface, font: Optional[pygame.font.Font], state, dungeon) -> None:
-    # 1. Draw HUD Background
     hud_height = SCREEN_HEIGHT - (GRID_HEIGHT * TILE_SIZE)
     hud_rect = pygame.Rect(0, GRID_HEIGHT * TILE_SIZE, SCREEN_WIDTH, hud_height)
     pygame.draw.rect(screen, HUD_BG, hud_rect)
 
-    # 2. Progress Bars (Keep these on the left)
     base_y = GRID_HEIGHT * TILE_SIZE
-    
-    # HP Bar
     hp_ratio = max(0.0, min(1.0, state.hp / max(1, MAX_HP)))
     pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, base_y + 12, 220, 18))
     pygame.draw.rect(screen, (208, 77, 77), pygame.Rect(16, base_y + 12, int(220 * hp_ratio), 18))
 
-    # Relic Bar
     relic_ratio = dungeon.collected_relics / max(1, dungeon.relic_goal)
     pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, base_y + 40, 220, 14))
     pygame.draw.rect(screen, COLORS[RELIC], pygame.Rect(16, base_y + 40, int(220 * relic_ratio), 14))
 
-    # Flow Bar
     flow_ratio = max(0.0, min(1.0, state.flow_score))
     pygame.draw.rect(screen, (52, 56, 66), pygame.Rect(16, base_y + 62, 220, 14))
     pygame.draw.rect(screen, (98, 168, 230), pygame.Rect(16, base_y + 62, int(220 * flow_ratio), 14))
 
-    # 3. Powerups (Keep these below the bars)
     panel_x, panel_y = 16, base_y + 84
     for idx, p_type in enumerate([POWER_HEAL, POWER_SPEED]):
         box = pygame.Rect(panel_x + idx * 76, panel_y, 64, 28)
@@ -1151,9 +1232,8 @@ def draw_hud(screen: pygame.Surface, font: Optional[pygame.font.Font], state, du
         if p_type == POWER_SPEED and state.speed_boost_steps > 0:
             pygame.draw.rect(screen, (245, 245, 245), box, 2, border_radius=6)
 
-    # 4. HUD Text (Right side, using dynamic vertical spacing to prevent overlap)
     if font is not None:
-        text_x = 260  # Shifted to the right to avoid the bars
+        text_x = 260 
         line_height = 20
         current_y = base_y + 10
         
@@ -1171,19 +1251,30 @@ def draw_hud(screen: pygame.Surface, font: Optional[pygame.font.Font], state, du
             screen.blit(font.render(line, True, TEXT_COLOR), (text_x, current_y))
             current_y += line_height
 
-        # Status Message (Separate from stats)
         if state.status_timer > 0 and state.status_message:
             screen.blit(font.render(state.status_message, True, (255, 232, 160)), (text_x, current_y + 10))
 
-    # 5. Minimap
     draw_minimap(screen, state, dungeon, font)
 
 
 def _update_in_room_flow(state: GameState, director: Director) -> None:
-    elapsed = max(0.0, time.time() - state.room_start_time)
-    hp_lost = max(0, state.room_start_hp - state.hp)
-    inferred = director.bandit.reward_from_metrics(elapsed, hp_lost)
-    state.flow_score = 0.85 * state.flow_score + 0.15 * inferred
+    elapsed = max(0.5, time.time() - state.room_start_time)
+    kpr = state.moves_made / elapsed
+    avg_enemy_distance = 0.0
+    if state.enemy_distance_samples > 0:
+        avg_enemy_distance = state.enemy_distance_accum / state.enemy_distance_samples
+
+    if director.bandit is not None:
+        inferred = director.bandit.reward_from_metrics(
+            elapsed,
+            state.enemy_hits_taken,
+            avg_enemy_distance,
+            kpr,
+        )
+    else:
+        inferred = 0.5
+
+    state.flow_score = 0.80 * state.flow_score + 0.20 * inferred
     state.enemy_delay = _enemy_delay(state.difficulty, state.flow_score)
 
     if state.enemies:
@@ -1236,7 +1327,6 @@ def _apply_powerup(state: GameState, room: DungeonRoom, ptype: int) -> None:
         state.speed_boost_steps += SPEED_BOOST_STEPS
         state.speed_collected += 1
     elif ptype == POWER_SHIELD:
-        # Shield disattivato: convertito in piccolo heal per mantenere pickup semplice.
         state.hp = min(MAX_HP, state.hp + HEAL_AMOUNT // 2)
 
 
@@ -1267,6 +1357,7 @@ def _spawn_split_children(room: DungeonRoom, pos: Vec2) -> None:
 def _resolve_player_tile(state: GameState, room: DungeonRoom, dungeon: DungeonState) -> None:
     if state.player_pos in room.enemies:
         room.enemies.pop(state.player_pos)
+        state.enemy_kills += 1
         _apply_enemy_damage(state, ENEMY_CONTACT_DAMAGE // 2)
 
     p = room.powerups.pop(state.player_pos, None)
@@ -1309,14 +1400,19 @@ def _move_enemies(state: GameState, room: DungeonRoom) -> None:
         remaining.discard(enemy_pos)
         enemy.cooldown = max(0, enemy.cooldown - 1)
 
+        if enemy.cooldown > 0:
+            moved[enemy_pos] = enemy
+            continue
+
         steps = 1
         next_pos = enemy_pos
         for _ in range(steps):
             blocked = set(moved.keys()) | remaining
             candidate = _bfs_next_step(next_pos, state.player_pos, room, blocked)
             if candidate == state.player_pos:
-                damage = ENEMY_CONTACT_DAMAGE
+                damage = ENEMY_CONTACT_DAMAGE // 2
                 _apply_enemy_damage(state, damage)
+                enemy.cooldown = 4
                 break
             if candidate == next_pos:
                 break
@@ -1335,20 +1431,13 @@ def _find_transition_room(state: GameState, room: DungeonRoom) -> Optional[int]:
 
 
 def _create_font() -> Optional[pygame.font.Font]:
-    """Inizializzazione sicura del font che evita import ciclici."""
     try:
-        # 1. Non chiamare init() qui, è inutile se crasha
         if not pygame.get_init():
             pygame.init()
-        
-        # 2. Verifica se il modulo font è attivo
         if hasattr(pygame, 'font'):
-            # Usa il font di default che non richiede caricamenti complessi
             return pygame.font.Font(None, 24)
         return None
     except Exception:
-        # Se fallisce, restituiamo None e il gioco continuerà senza testi 
-        # (almeno non crasha!)
         return None
 
 def _new_game_state(start_room: int) -> GameState:
@@ -1444,11 +1533,27 @@ def run_self_test() -> int:
         if room.exits:
             nxt = next(iter(room.exits.values()))
             metrics = observer.complete_room(state.hp, _engagement_snapshot(state, dungeon))
-            state.flow_score = director.bandit.reward_from_metrics(metrics.time_taken, metrics.hp_lost)
+
+            if director.bandit is not None:
+                state.flow_score = director.bandit.reward_from_metrics(
+                    metrics.time_taken,
+                    metrics.enemy_hits_taken,
+                    metrics.avg_enemy_distance,
+                    0.0,
+                )
+            else:
+                state.flow_score = 0.5
+            
             _rotate_dungeon_event(dungeon, state.room_step + 1)
             _advance_predator(dungeon, nxt)
             if nxt not in dungeon.rooms:
-                room = _create_room(nxt, dungeon, director, (metrics.time_taken, metrics.hp_lost), force_reward_room=False)
+                room = _create_room(
+                    nxt,
+                    dungeon,
+                    director,
+                    (metrics.time_taken, metrics.enemy_hits_taken),
+                    force_reward_room=False,
+                )
             else:
                 room = dungeon.rooms[nxt]
             state.room_step += 1
@@ -1463,40 +1568,31 @@ def run(max_frames: Optional[int] = None) -> None:
     pygame.init()
     pygame.font.init()
     
-    # Setup Screen
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN | pygame.SCALED)
     clock = pygame.time.Clock()
     
-    # Safe font initialization
     font = _create_font()
     if font is None:
         font = pygame.font.SysFont("Arial", 17)
 
-    # --- STARTUP MENU: CONFIGURATION ---
     cfg = _show_startup_menu(screen)
     log_event(f"MENU_CONFIG: {cfg}")
     
-    # Apply configurations
     import config
     config.USE_BANDIT = cfg['bandit']
     config.ENEMY_DENSITY_MULT = cfg['density']
     
-    # Initialize systems
     director = Director(use_bandit=cfg['bandit'])
     observer = Observer()
     dungeon = _build_dungeon()
     
-    # Apply dynamic room/relic settings to state/dungeon
-    # Ensure these properties exist in your state object
     state = _new_game_state(dungeon.start_room)
     state.relic_goal = cfg['relics']
     state.max_rooms = cfg['rooms']
 
-    # Setup initial room
     room = _create_room(state.current_room_id, dungeon, director, None)
     _enter_room(state, dungeon, room)
     
-    # Log session start
     observer.start_room(state.room_step, state.difficulty, cfg['bandit'], state.hp)
 
     running = True
@@ -1537,19 +1633,34 @@ def run(max_frames: Optional[int] = None) -> None:
                 _move_enemies(state, room)
                 state.enemy_timer = 0.0
 
-        # Room Transition Logic
         target_room = _find_transition_room(state, room)
         if target_room is not None:
             snap = _engagement_snapshot(state, dungeon)
             metrics = observer.complete_room(state.hp, snap)
             _kpr = snap.get("key_press_rate", 0.0)
-            
-            state.flow_score = director.bandit.reward_from_metrics(metrics.time_taken, metrics.hp_lost, _kpr)
+
+            if director.bandit is not None:
+                state.flow_score = director.bandit.reward_from_metrics(
+                    metrics.time_taken,
+                    metrics.enemy_hits_taken,
+                    metrics.avg_enemy_distance,
+                    _kpr,
+                )
+            else:
+                state.flow_score = 0.5 
+
             _rotate_dungeon_event(dungeon, state.room_step + 1)
             _advance_predator(dungeon, target_room)
             
             if target_room not in dungeon.rooms:
-                room = _create_room(target_room, dungeon, director, (metrics.time_taken, metrics.hp_lost), key_press_rate=_kpr, force_reward_room=False)
+                room = _create_room(
+                    target_room,
+                    dungeon,
+                    director,
+                    (metrics.time_taken, metrics.enemy_hits_taken),
+                    key_press_rate=_kpr,
+                    force_reward_room=False,
+                )
             else:
                 room = dungeon.rooms[target_room]
                 
@@ -1558,10 +1669,8 @@ def run(max_frames: Optional[int] = None) -> None:
             _enter_room(state, dungeon, room)
             observer.start_room(state.room_step, state.difficulty, cfg['bandit'], state.hp)
 
-        # Win/Loss Conditions
         if room.final_door_pos is not None and state.player_pos == room.final_door_pos:
             if int(room.grid[room.final_door_pos[1], room.final_door_pos[0]]) == DOOR_OPEN:
-                # Check relic goal before allowing exit
                 if state.relics_collected >= state.relic_goal:
                     state.is_win = True
                     running = False
@@ -1570,7 +1679,6 @@ def run(max_frames: Optional[int] = None) -> None:
             state.game_over = True
             running = False
 
-        # Rendering
         _update_caption(state, dungeon)
         screen.fill((0, 0, 0))
         draw_grid(screen, room, state.player_pos)

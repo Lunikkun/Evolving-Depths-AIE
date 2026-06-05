@@ -9,8 +9,6 @@ from config import ENEMY, EXIT, FLOOR, WALL
 
 
 class AStarVerifier:
-    """Verifies room reachability simulating ONLY the actual carved exits."""
-
     def __init__(self, start: Tuple[int, int] = (0, 0)) -> None:
         self.start = start
 
@@ -65,46 +63,42 @@ class AStarVerifier:
 
         points_to_connect = []
 
-        # Simuliamo lo scavo SOLO per le porte che esistono davvero in questa stanza
         if exits:
             for (x, y) in exits.keys():
-                if y == 0:  # TOP
+                if y == 0:
                     for nx in range(mid_x - 1, mid_x + 2):
                         test_grid[0, nx] = EXIT if nx == mid_x else FLOOR
                         test_grid[1, nx] = FLOOR
                         test_grid[2, nx] = FLOOR
                     points_to_connect.append((mid_x, 2))
-                elif y == height - 1:  # BOTTOM
+                elif y == height - 1:
                     for nx in range(mid_x - 1, mid_x + 2):
                         test_grid[height - 1, nx] = EXIT if nx == mid_x else FLOOR
                         test_grid[height - 2, nx] = FLOOR
                         test_grid[height - 3, nx] = FLOOR
                     points_to_connect.append((mid_x, height - 3))
-                elif x == 0:  # LEFT
+                elif x == 0:
                     for ny in range(mid_y - 1, mid_y + 2):
                         test_grid[ny, 0] = EXIT if ny == mid_y else FLOOR
                         test_grid[ny, 1] = FLOOR
                         test_grid[ny, 2] = FLOOR
                     points_to_connect.append((2, mid_y))
-                elif x == width - 1:  # RIGHT
+                elif x == width - 1:
                     for ny in range(mid_y - 1, mid_y + 2):
                         test_grid[ny, width - 1] = EXIT if ny == mid_y else FLOOR
                         test_grid[ny, width - 2] = FLOOR
                         test_grid[ny, width - 3] = FLOOR
                     points_to_connect.append((width - 3, mid_y))
 
-        # Se non ci sono porte (stanza di spawn isolata), usa il centro come punto base
         if not points_to_connect:
             points_to_connect.append((mid_x, mid_y))
 
-        # Aggiungi sempre la porta finale / obiettivo
         test_grid[height - 2, width - 2] = FLOOR
         points_to_connect.append((width - 2, height - 2))
 
-        # Valida che tutte le porte e l'obiettivo siano collegati tra loro
         reference_point = points_to_connect[0]
         for target in points_to_connect[1:]:
             if not self.check_path(test_grid, reference_point, target):
                 return False
-                
+
         return True

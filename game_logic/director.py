@@ -6,7 +6,7 @@ class Director:
         self.use_bandit = use_bandit
         self.bandit = None
         self.last_engagement = 0.5
-        self.generator = None  # Inizializziamo l'attributo che main.py cerca
+        self.generator = None
         
         if self.use_bandit:
             try:
@@ -24,21 +24,18 @@ class Director:
 
     def generate_next_room(self, stats: dict, key_press_rate: float, exits: list = None):
         from ai.generator import RoomGenerator
-        
-        # Aggiorniamo l'engagement
+
         self.last_engagement = min(1.0, max(0.0, key_press_rate / 5.0))
-        
-        # Creiamo l'istanza e la salviamo in self.generator
+
         self.generator = RoomGenerator() 
-        
+
         difficulty = self._choose_difficulty()
-        
-        # Creiamo la mappa
+
         grid = self.generator.create_map(
             difficulty_level=difficulty, 
             engagement=self.last_engagement
         )
-        
+
         attempts = 0 
-        
+
         return grid, difficulty, attempts

@@ -1,187 +1,127 @@
 from __future__ import annotations
 
 import random
+from typing import Optional, Tuple, List
 
 import numpy as np
 
 from config import ENEMY, EXIT, FLOOR, GRID_HEIGHT, GRID_WIDTH, WALL
 
-
 class RoomGenerator:
+    """Search-based PCG via cellular automata refinement."""
+
     def __init__(self, width: int = GRID_WIDTH, height: int = GRID_HEIGHT) -> None:
         self.width = width
         self.height = height
-        self.last_room_profile = "cave"
-        self.last_wall_prob = 0.0
-        self.last_enemy_count = 0
-        self.last_engagement = 0.5
+        # Inizializziamo l'attributo richiesto dal main.py
+        self.last_room_profile = "none" 
+        # Definiamo i profili disponibili
+        self.profiles = ["arena", "pillars", "crossroads", "cave", "corridor"]
 
-    def _weighted_choice(self, weights: dict[str, float], fallback: str) -> str:
-        total = sum(max(0.05, value) for value in weights.values())
-        roll = random.random() * total
-        acc = 0.0
-        for profile, value in weights.items():
-            acc += max(0.05, value)
-            if roll <= acc:
-                return profile
-        return fallback
+    def _get_profile_weights(self, difficulty: int) -> List[float]:
+        # Profili più chiusi nelle difficoltà alte, più aperti solo nel safe.
+        if difficulty == 0:  # Safe
+            return [0.28, 0.20, 0.18, 0.16, 0.18]
+        elif difficulty == 1:  # Medium
+            return [0.16, 0.18, 0.18, 0.24, 0.24]
+        else:  # Swarm (difficulty == 2)
+            return [0.08, 0.15, 0.17, 0.30, 0.30]
 
-    def _wall_probability(self, difficulty_level: int, engagement: float) -> float:
-        base = {
-            0: 0.30,
-            1: 0.36,
-            2: 0.42,
-        }.get(difficulty_level, 0.36)
-        adaptive = (engagement - 0.5) * 0.16
-        jitter = random.uniform(-0.03, 0.03)
-        return max(0.16, min(0.58, base + adaptive + jitter))
+    def _wall_probability(self, difficulty_level: int) -> float:
+        # Più muri = stanze più strette, chiuse e articolate.
+        return {0: 0.36, 1: 0.44, 2: 0.52}.get(difficulty_level, 0.44)
 
-    def _enemy_count(self, difficulty_level: int, engagement: float) -> int:
-        base = {
-            0: 4,
-            1: 7,
-            2: 12,
-        }.get(difficulty_level, 4)
-        adaptive = round((engagement - 0.5) * 6)
-        jitter = random.choice([-2, -1, 0, 1, 2])
-        return max(1, base + adaptive + jitter)
-
-    def _choose_profile(self, difficulty_level: int, engagement: float) -> str:
-        engagement = max(0.0, min(1.0, engagement))
-
-        if difficulty_level == 0:
-            weights = {
-                "arena":      0.50,
-                "pillars":    0.40,
-                "cave":       0.10,
-                "corridor":   0.05,
-                "crossroads": 0.10,
-                "islands":    0.15,
-            }
-        elif difficulty_level == 1:
-            weights = {
-                "arena":      0.20,
-                "pillars":    0.20,
-                "cave":       0.30,
-                "corridor":   0.25,
-                "crossroads": 0.15,
-                "islands":    0.10,
-            }
-        else:
-            weights = {
-                "arena":      0.05,
-                "pillars":    0.05,
-                "cave":       0.40,
-                "corridor":   0.40,
-                "crossroads": 0.15,
-                "islands":    0.10,
-            }
-
-        weights["arena"]    += (0.5 - engagement) * 0.40
-        weights["pillars"]  += (0.5 - engagement) * 0.20
-        weights["corridor"] += (engagement - 0.5) * 0.50
-        weights["cave"]     += (engagement - 0.5) * 0.30
-
-        return self._weighted_choice(weights, fallback="cave")
-
-    def _init_by_profile(self, profile: str, wall_prob: float) -> np.ndarray:
+    def _automata_steps(self, difficulty_level: int, profile: str) -> int:
+        base_steps = {0: 3, 1: 4, 2: 5}.get(difficulty_level, 4)
+        if profile in {"cave", "corridor"}:
+            return base_steps + 1
         if profile == "arena":
-            grid = np.full((self.height, self.width), FLOOR, dtype=np.int32)
-            obstacle_prob = max(0.18, min(0.30, wall_prob * 0.75))
-            mask = np.random.rand(self.height, self.width) < obstacle_prob
-            grid[mask] = WALL
-            return grid
-
+            return max(2, base_steps - 1)
         if profile == "pillars":
-            grid = np.full((self.height, self.width), FLOOR, dtype=np.int32)
-            for y in range(2, self.height - 2, 3):
-                for x in range(2, self.width - 2, 4):
-                    if random.random() < 0.8:
-                        grid[y, x] = WALL
-                        if random.random() < 0.55 and x + 1 < self.width - 1:
-                            grid[y, x + 1] = WALL
-            return grid
+            return base_steps
+        return base_steps
 
+    def _profile_wall_bonus(self, profile: str) -> float:
+        if profile == "arena":
+            return -0.04
+        if profile == "pillars":
+            return 0.02
         if profile == "crossroads":
-            grid = np.full((self.height, self.width), WALL, dtype=np.int32)
-            center_x = self.width // 2
-            center_y = self.height // 2
-            grid[:, max(1, center_x - 1):min(self.width - 1, center_x + 2)] = FLOOR
-            grid[max(1, center_y - 1):min(self.height - 1, center_y + 2), :] = FLOOR
-            for _ in range(4):
-                room_w = random.randint(3, 5)
-                room_h = random.randint(3, 4)
-                x0 = random.randint(1, max(1, self.width - room_w - 1))
-                y0 = random.randint(1, max(1, self.height - room_h - 1))
-                grid[y0:y0 + room_h, x0:x0 + room_w] = FLOOR
-            return grid
-
-        if profile == "islands":
-            grid = np.full((self.height, self.width), FLOOR, dtype=np.int32)
-            island_count = max(3, (self.width * self.height) // 45)
-            for _ in range(island_count):
-                x0 = random.randint(2, self.width - 4)
-                y0 = random.randint(2, self.height - 4)
-                w = random.randint(2, 4)
-                h = random.randint(2, 3)
-                grid[y0:y0 + h, x0:x0 + w] = WALL
-            return grid
-
-        if profile == "corridor":
-            grid = np.full((self.height, self.width), WALL, dtype=np.int32)
-            x, y = 0, 0
-            grid[y, x] = FLOOR
-            for _ in range(int(self.width * self.height * 1.5)):
-                dx, dy = random.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
-                x = max(0, min(self.width - 1, x + dx))
-                y = max(0, min(self.height - 1, y + dy))
-                grid[y, x] = FLOOR
-                if random.random() < 0.35:
-                    nx = max(0, min(self.width - 1, x + random.choice([-1, 0, 1])))
-                    ny = max(0, min(self.height - 1, y + random.choice([-1, 0, 1])))
-                    grid[ny, nx] = FLOOR
-            return grid
-
-        return np.where(
-            np.random.rand(self.height, self.width) < wall_prob,
-            WALL,
-            FLOOR,
-        ).astype(np.int32)
-
-    def _step_automata_light(self, grid: np.ndarray) -> np.ndarray:
-        next_grid = grid.copy()
-        for y in range(1, self.height - 1):
-            for x in range(1, self.width - 1):
-                if grid[y, x] == WALL and self._count_wall_neighbors(grid, x, y) == 0:
-                    next_grid[y, x] = FLOOR
-        return next_grid
-
-    def _apply_profile_post(self, profile: str, grid: np.ndarray) -> np.ndarray:
+            return 0.04
         if profile == "cave":
-            for _ in range(4):
-                grid = self._step_automata(grid)
-            return grid
+            return 0.08
+        if profile == "corridor":
+            return 0.10
+        return 0.0
 
-        if profile == "arena":
-            return self._step_automata_light(grid)
-
-        if profile == "pillars":
-            return grid
-
+    def _target_wall_ratio(self, difficulty_level: int, profile: str) -> float:
+        base = {0: 0.34, 1: 0.42, 2: 0.50}.get(difficulty_level, 0.42)
+        if profile in {"cave", "corridor"}:
+            return base + 0.06
         if profile == "crossroads":
+            return base + 0.03
+        if profile == "arena":
+            return max(0.22, base - 0.08)
+        return base
+
+    def _place_organic_blob(self, grid: np.ndarray, cx: int, cy: int, reserved: set) -> int:
+        """Place a randomly-shaped wall blob centred at (cx, cy). Returns cells added."""
+        shape = random.choice(["rect", "L", "T", "plus", "diagonal"])
+        cells = []
+        w = random.randint(2, 5)
+        h = random.randint(2, 4)
+        if shape == "rect":
+            cells = [(cx + dx, cy + dy) for dx in range(w) for dy in range(h)]
+        elif shape == "L":
+            cells  = [(cx + dx, cy) for dx in range(w)]
+            cells += [(cx, cy + dy) for dy in range(1, h)]
+        elif shape == "T":
+            cells  = [(cx + dx, cy) for dx in range(w)]
+            mid = w // 2
+            cells += [(cx + mid, cy + dy) for dy in range(1, h)]
+        elif shape == "plus":
+            mid = w // 2
+            cells  = [(cx + mid, cy + dy) for dy in range(h)]
+            cells += [(cx + dx, cy + h // 2) for dx in range(w)]
+        else:  # diagonal staircase
+            cells = [(cx + i, cy + i) for i in range(min(w, h))]
+            cells += [(cx + i + 1, cy + i) for i in range(min(w, h) - 1)]
+
+        # Random rotation: swap x/y axes ~half the time
+        if random.random() < 0.5:
+            cells = [(cy_off + cx - cy, cx_off + cy - cx) for cx_off, cy_off in cells]
+
+        added = 0
+        for fx, fy in cells:
+            if (fx, fy) in reserved:
+                continue
+            if 1 <= fx < self.width - 1 and 1 <= fy < self.height - 1:
+                if int(grid[fy, fx]) == FLOOR:
+                    grid[fy, fx] = WALL
+                    added += 1
+        return added
+
+    def _enforce_wall_density(self, grid: np.ndarray, difficulty_level: int, entrance: Tuple[int, int], exit_cell: Tuple[int, int]) -> np.ndarray:
+        target_ratio = self._target_wall_ratio(difficulty_level, self.last_room_profile)
+        reserved = {entrance, exit_cell}
+        total_cells = self.width * self.height
+        target_walls = int(total_cells * target_ratio)
+        current_walls = int(np.count_nonzero(grid == WALL))
+        if current_walls >= target_walls:
             return grid
 
-        if profile == "islands":
-            return self._step_automata(grid)
+        deficit = target_walls - current_walls
+        attempts = 0
+        while deficit > 0 and attempts < 200:
+            attempts += 1
+            cx = random.randint(3, self.width - 6)
+            cy = random.randint(3, self.height - 6)
+            added = self._place_organic_blob(grid, cx, cy, reserved)
+            deficit -= added
+        return grid
 
-        return self._step_automata(grid)
-
-    def _apply_random_transform(self, grid: np.ndarray) -> np.ndarray:
-        k = random.choice([0, 2])
-        transformed = np.rot90(grid, k=k)
-        if random.random() < 0.5:
-            transformed = np.fliplr(transformed)
-        return transformed.copy().astype(np.int32)
+    def _enemy_count(self, difficulty_level: int) -> int:
+        return {0: 5, 1: 7, 2: 10}.get(difficulty_level, 5)
 
     def _count_wall_neighbors(self, grid: np.ndarray, x: int, y: int) -> int:
         count = 0
@@ -194,27 +134,40 @@ class RoomGenerator:
         return count
 
     def _step_automata(self, grid: np.ndarray) -> np.ndarray:
+        # Vectorised 8-neighbour wall count using numpy slicing (no scipy needed).
+        wall = (grid == WALL).astype(np.int32)
+        h, w = wall.shape
+        count = np.zeros((h, w), dtype=np.int32)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy == 0 and dx == 0:
+                    continue
+                y0s, y0e = max(0, -dy), h - max(0, dy)
+                x0s, x0e = max(0, -dx), w - max(0, dx)
+                y1s, y1e = max(0,  dy), h - max(0, -dy)
+                x1s, x1e = max(0,  dx), w - max(0, -dx)
+                count[y0s:y0e, x0s:x0e] += wall[y1s:y1e, x1s:x1e]
         next_grid = grid.copy()
-        for y in range(1, self.height - 1):
-            for x in range(1, self.width - 1):
-                neighbors = self._count_wall_neighbors(grid, x, y)
-                if neighbors >= 5:
-                    next_grid[y, x] = WALL
-                else:
-                    next_grid[y, x] = FLOOR
+        interior = np.zeros((h, w), dtype=bool)
+        interior[1:-1, 1:-1] = True
+        next_grid[interior & (count >= 5)] = WALL
+        next_grid[interior & (count < 5)] = FLOOR
         return next_grid
 
-    def create_map(self, difficulty_level: int, engagement: float = 0.5) -> np.ndarray:
-        wall_prob = self._wall_probability(difficulty_level, engagement)
-        profile = self._choose_profile(difficulty_level, engagement)
-        self.last_room_profile = profile
-        self.last_wall_prob = wall_prob
-        self.last_engagement = engagement
+    def create_map(self, difficulty_level: int) -> np.ndarray:
+        # 1. Selezioniamo il profilo basato sulla difficoltà
+        weights = self._get_profile_weights(difficulty_level)
+        self.last_room_profile = random.choices(self.profiles, weights=weights)[0]
 
-        grid = self._init_by_profile(profile, wall_prob)
-        grid = self._apply_profile_post(profile, grid)
-        grid = self._apply_random_transform(grid)
+        # 2. Generazione mappa
+        wall_prob = min(0.62, max(0.22, self._wall_probability(difficulty_level) + self._profile_wall_bonus(self.last_room_profile)))
+        grid = np.where(
+            np.random.rand(self.height, self.width) < wall_prob,
+            WALL,
+            FLOOR,
+        ).astype(np.int32)
 
+        # Manteniamo i bordi chiusi
         grid[0, :] = WALL
         grid[:, 0] = WALL
         grid[self.height - 1, :] = WALL
@@ -225,35 +178,30 @@ class RoomGenerator:
         grid[entrance[1], entrance[0]] = FLOOR
         grid[exit_cell[1], exit_cell[0]] = EXIT
 
-        grid[entrance[1], entrance[0]] = FLOOR
-        grid[exit_cell[1], exit_cell[0]] = EXIT
+        for _ in range(self._automata_steps(difficulty_level, self.last_room_profile)):
+            grid = self._step_automata(grid)
+            grid[entrance[1], entrance[0]] = FLOOR
+            grid[exit_cell[1], exit_cell[0]] = EXIT
 
-        if self.width > 1:
-            grid[0, 1] = FLOOR
-        if self.height > 1:
-            grid[1, 0] = FLOOR
-        if self.width > 1:
-            grid[self.height - 1, self.width - 2] = FLOOR
-        if self.height > 1:
-            grid[self.height - 2, self.width - 1] = FLOOR
+        grid = self._enforce_wall_density(grid, difficulty_level, entrance, exit_cell)
 
-        enemy_count = self._enemy_count(difficulty_level, engagement)
-        self.last_enemy_count = enemy_count
+        # Assicuriamo la traversabilità base
+        if self.width > 1: grid[0, 1] = FLOOR
+        if self.height > 1: grid[1, 0] = FLOOR
+        if self.width > 1: grid[self.height - 1, self.width - 2] = FLOOR
+        if self.height > 1: grid[self.height - 2, self.width - 1] = FLOOR
+
+        # 3. Spawn nemici
+        enemy_count = self._enemy_count(difficulty_level)
         floor_positions = list(zip(*np.where(grid == FLOOR)))
         random.shuffle(floor_positions)
 
         placed = 0
         for y, x in floor_positions:
-            if (x, y) in [entrance, exit_cell]:
-                continue
-            if abs(x - entrance[0]) + abs(y - entrance[1]) < 4:
-                continue
-            if abs(x - exit_cell[0]) + abs(y - exit_cell[1]) < 3:
-                continue
+            if (x, y) in [entrance, exit_cell]: continue
             grid[y, x] = ENEMY
             placed += 1
-            if placed >= enemy_count:
-                break
+            if placed >= enemy_count: break
 
         grid[exit_cell[1], exit_cell[0]] = EXIT
         return grid

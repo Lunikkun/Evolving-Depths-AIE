@@ -411,6 +411,7 @@ def _engagement_snapshot(state: GameState, dungeon: DungeonState) -> dict:
         "shield_hits": state.shield_hits,
         "room_profile": state.room_profile,
         "room_special_type": state.room_special_type,
+        "goals_current": dungeon.collected_relics,
         "relics_collected": dungeon.collected_relics,
         "relic_goal": dungeon.relic_goal,
         "final_door_open": dungeon.collected_relics >= dungeon.relic_goal,
@@ -429,8 +430,14 @@ def is_walkable(grid: np.ndarray, pos: Vec2) -> bool:
 
 def _enemy_delay(difficulty: int, flow_score: float) -> float:
     base = ENEMY_BASE_MOVE_DELAY.get(difficulty, 0.50)
-    scale = 1.20 - 0.70 * max(0.0, min(1.0, flow_score))
-    return max(0.12, base * scale)
+    flow = max(0.0, min(1.0, flow_score))
+    scale = 1.10 - 0.50 * flow
+    min_delay = {
+        0: 0.32,
+        1: 0.24,
+        2: 0.18,
+    }.get(difficulty, 0.20)
+    return max(min_delay, base * scale)
 
 
 def _parse_generated_room(grid: np.ndarray) -> Set[Vec2]:
@@ -464,7 +471,7 @@ def spawn_room_features(
     pool = _available_floor_positions(grid, reserved)
 
     powerups: Dict[Vec2, int] = {}
-    powerup_count = {0: 2, 1: 2, 2: 3}.get(difficulty, 2) + bonus_powerups
+    powerup_count = {0: 3, 1: 4, 2: 5}.get(difficulty, 4) + bonus_powerups
     weights = [(POWER_HEAL, 0.55), (POWER_SPEED, 0.45)]
 
     for _ in range(min(powerup_count, len(pool))):
@@ -548,16 +555,22 @@ def _build_dungeon_layout(num_rooms: int) -> Tuple[Dict[int, Vec2], Dict[int, Se
 def _exit_layout(room_id: int, dungeon: DungeonState) -> Dict[Vec2, int]:
     x, y = dungeon.coords_by_room[room_id]
     out: Dict[Vec2, int] = {}
+
+    left_slot = (0, random.randint(2, GRID_HEIGHT - 3))
+    right_slot = (GRID_WIDTH - 1, random.randint(2, GRID_HEIGHT - 3))
+    top_slot = (random.randint(2, GRID_WIDTH - 3), 0)
+    bottom_slot = (random.randint(2, GRID_WIDTH - 3), GRID_HEIGHT - 1)
+
     for neighbor in dungeon.adjacency[room_id]:
         nx, ny = dungeon.coords_by_room[neighbor]
         if nx == x and ny == y - 1:
-            out[(GRID_WIDTH // 2, 0)] = neighbor
+            out[top_slot] = neighbor
         elif nx == x and ny == y + 1:
-            out[(GRID_WIDTH // 2, GRID_HEIGHT - 1)] = neighbor
+            out[bottom_slot] = neighbor
         elif nx == x - 1 and ny == y:
-            out[(0, GRID_HEIGHT // 2)] = neighbor
+            out[left_slot] = neighbor
         elif nx == x + 1 and ny == y:
-            out[(GRID_WIDTH - 1, GRID_HEIGHT // 2)] = neighbor
+            out[right_slot] = neighbor
     return out
 
 
@@ -610,19 +623,13 @@ def _spawn_position_for_entry(room: DungeonRoom, previous_room_id: Optional[int]
             return sorted(room.spawn_points.values())[0]
         return (1, 1)
 
-    x, y = dungeon.coords_by_room[room.room_id]
-    px, py = dungeon.coords_by_room[previous_room_id]
-    if px == x - 1:
-        door_pos = (0, GRID_HEIGHT // 2)
-    elif px == x + 1:
-        door_pos = (GRID_WIDTH - 1, GRID_HEIGHT // 2)
-    elif py == y - 1:
-        door_pos = (GRID_WIDTH // 2, 0)
-    elif py == y + 1:
-        door_pos = (GRID_WIDTH // 2, GRID_HEIGHT - 1)
-    else:
-        return (1, 1)
-    return room.spawn_points.get(door_pos, (1, 1))
+    for door_pos, target_room_id in room.exits.items():
+        if target_room_id == previous_room_id:
+            return room.spawn_points.get(door_pos, (1, 1))
+
+    if room.spawn_points:
+        return sorted(room.spawn_points.values())[0]
+    return (1, 1)
 
 
 def _layout_distances(adjacency: Dict[int, Set[int]], start_room: int) -> Dict[int, int]:
@@ -809,7 +816,7 @@ def _create_room(
 
     final_door_pos: Optional[Vec2] = None
     if room_id == dungeon.final_room:
-        final_door_pos = (GRID_WIDTH - 2, GRID_HEIGHT - 2)
+        final_door_pos = _pick_final_door_pos(grid, safe_start, reserved_points)
         grid[final_door_pos[1], final_door_pos[0]] = DOOR_LOCKED
 
     extra_engagement_spawns = int(round(max(0.0, engagement - 0.45) * 4))
@@ -965,6 +972,45 @@ def _clear_small_wall_islands(grid: np.ndarray) -> None:
 
     for x, y in to_clear:
         grid[y, x] = FLOOR
+
+
+def _pick_final_door_pos(grid: np.ndarray, safe_start: Vec2, forbidden: Set[Vec2]) -> Vec2:
+    candidates = [
+        (1, 1),
+        (GRID_WIDTH - 2, 1),
+        (1, GRID_HEIGHT - 2),
+        (GRID_WIDTH - 2, GRID_HEIGHT - 2),
+        (GRID_WIDTH // 2, 1),
+        (GRID_WIDTH // 2, GRID_HEIGHT - 2),
+        (1, GRID_HEIGHT // 2),
+        (GRID_WIDTH - 2, GRID_HEIGHT // 2),
+    ]
+
+    valid: list[Vec2] = []
+    for pos in candidates:
+        x, y = pos
+        if pos in forbidden:
+            continue
+        if int(grid[y, x]) not in {FLOOR, EXIT}:
+            continue
+        if _is_reachable(grid, safe_start, pos):
+            valid.append(pos)
+
+    if not valid:
+        for y in range(1, GRID_HEIGHT - 1):
+            for x in range(1, GRID_WIDTH - 1):
+                pos = (x, y)
+                if pos in forbidden:
+                    continue
+                if int(grid[y, x]) != FLOOR:
+                    continue
+                if _is_reachable(grid, safe_start, pos):
+                    valid.append(pos)
+
+    if not valid:
+        return safe_start
+
+    return max(valid, key=lambda p: abs(p[0] - safe_start[0]) + abs(p[1] - safe_start[1]))
 
 
 def _enter_room(state: GameState, dungeon: DungeonState, room: DungeonRoom) -> None:
@@ -1264,17 +1310,15 @@ def _update_in_room_flow(state: GameState, director: Director) -> None:
     if state.enemy_distance_samples > 0:
         avg_enemy_distance = state.enemy_distance_accum / state.enemy_distance_samples
 
-    if director.bandit is not None:
-        inferred = director.bandit.reward_from_metrics(
-            elapsed,
-            state.enemy_hits_taken,
-            avg_enemy_distance,
-            kpr,
-        )
-    else:
-        inferred = 0.5
+    # Mid-room: time-to-complete is unknown so we cannot use reward_from_metrics.
+    # Use only instantly-available signals: KPR (active input) and enemy proximity.
+    # Both are monotonic: more input and closer enemies = higher engagement.
+    kpr_signal = min(1.0, kpr / 3.0)                                    # saturates at 3 kp/s
+    proximity_signal = max(0.0, 1.0 - min(avg_enemy_distance, 12.0) / 12.0)  # closer = higher
+    inferred = 0.55 * kpr_signal + 0.45 * proximity_signal
 
-    state.flow_score = 0.80 * state.flow_score + 0.20 * inferred
+    # Slow drift: flow score moves gradually, not frame-to-frame.
+    state.flow_score = 0.92 * state.flow_score + 0.08 * inferred
     state.enemy_delay = _enemy_delay(state.difficulty, state.flow_score)
 
     if state.enemies:
@@ -1551,7 +1595,8 @@ def run_self_test() -> int:
                     nxt,
                     dungeon,
                     director,
-                    (metrics.time_taken, metrics.enemy_hits_taken),
+                    (metrics.time_taken, metrics.enemy_hits_taken,
+                     metrics.avg_enemy_distance, 0.0),
                     force_reward_room=False,
                 )
             else:
@@ -1657,7 +1702,8 @@ def run(max_frames: Optional[int] = None) -> None:
                     target_room,
                     dungeon,
                     director,
-                    (metrics.time_taken, metrics.enemy_hits_taken),
+                    (metrics.time_taken, metrics.enemy_hits_taken,
+                     metrics.avg_enemy_distance, _kpr),
                     key_press_rate=_kpr,
                     force_reward_room=False,
                 )
@@ -1671,7 +1717,7 @@ def run(max_frames: Optional[int] = None) -> None:
 
         if room.final_door_pos is not None and state.player_pos == room.final_door_pos:
             if int(room.grid[room.final_door_pos[1], room.final_door_pos[0]]) == DOOR_OPEN:
-                if state.relics_collected >= state.relic_goal:
+                if dungeon.collected_relics >= dungeon.relic_goal:
                     state.is_win = True
                     running = False
 

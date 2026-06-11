@@ -38,7 +38,7 @@ SHIELD_HITS = 3
 ENEMY_BASE_MOVE_DELAY = {
     0: 0.50,
     1: 0.35,
-    2: 0.15,
+    2: 0.22,
 }
 
 DIFFICULTY_NAMES = {
